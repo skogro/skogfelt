@@ -41,11 +41,14 @@ const StringTextField = ({
   const [isDirty, setIsDirty] = useState<boolean>(false);
 
   const inputValueRef = useRef<string>(inputValue);
+  const externalValueRef = useRef<string>(value ? String(value) : "");
   const isDirtyRef = useRef<boolean>(isDirty);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuedSaveSeqRef = useRef<number>(0);
   const mountedRef = useRef<boolean>(true);
+  const awaitingExternalSyncRef = useRef<boolean>(false);
+  const pendingSavedValueRef = useRef<string | null>(null);
 
   useEffect(() => {
     inputValueRef.current = inputValue;
@@ -67,8 +70,20 @@ const StringTextField = ({
   }, []);
 
   useEffect(() => {
+    const normalizedValue = value ? String(value) : "";
+    externalValueRef.current = normalizedValue;
+
+    if (awaitingExternalSyncRef.current) {
+      if (normalizedValue === pendingSavedValueRef.current) {
+        awaitingExternalSyncRef.current = false;
+        pendingSavedValueRef.current = null;
+        setIsDirty(false);
+      }
+      return;
+    }
+
     if (!isDirty) {
-      setInputValue(value ? String(value) : "");
+      setInputValue(normalizedValue);
     }
   }, [value, isDirty]);
 
@@ -106,7 +121,14 @@ const StringTextField = ({
           setChangeExecuting(false);
           setChangeError(null);
           if (inputValueRef.current === valueToSave && saveSeq === queuedSaveSeqRef.current) {
-            setIsDirty(false);
+            if (externalValueRef.current === valueToSave) {
+              awaitingExternalSyncRef.current = false;
+              pendingSavedValueRef.current = null;
+              setIsDirty(false);
+            } else {
+              awaitingExternalSyncRef.current = true;
+              pendingSavedValueRef.current = valueToSave;
+            }
           }
         } catch (error) {
           if (!mountedRef.current) {
@@ -116,6 +138,8 @@ const StringTextField = ({
           const message = error instanceof Error ? error.message : "Failed to save";
           setChangeExecuting(false);
           setChangeError(message);
+          awaitingExternalSyncRef.current = false;
+          pendingSavedValueRef.current = null;
           setIsDirty(true);
         }
       });
@@ -190,6 +214,8 @@ const StringTextField = ({
         disabled={disabled}
         onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
           const nextValue = event.target.value;
+          awaitingExternalSyncRef.current = false;
+          pendingSavedValueRef.current = null;
           setInputValue(nextValue);
           setIsDirty(true);
           setChangeError(null);

@@ -147,6 +147,92 @@ describe("component behavior", () => {
     expect(() => unmount()).not.toThrow();
   });
 
+  it("StringTextField keeps typed value when save finishes before prop sync", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onChange = vi.fn(async () => undefined);
+    const saveChange = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSave = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <StringTextField
+        value=""
+        name="fullName"
+        label="Full Name"
+        onChange={onChange}
+        saveChange={saveChange}
+      />
+    );
+
+    const input = screen.getByLabelText("Full Name") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "kept-value" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledWith("kept-value");
+      expect(screen.getByText("Saving Change...")).toBeTruthy();
+    });
+
+    resolveSave?.();
+
+    // Simulate stale parent value before provider cache catches up.
+    rerender(
+      <StringTextField
+        value=""
+        name="fullName"
+        label="Full Name"
+        onChange={onChange}
+        saveChange={saveChange}
+      />
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Full Name") as HTMLInputElement).value).toBe("kept-value");
+    });
+  });
+
+  it("StringTextField remains editable while awaiting external sync", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onChange = vi.fn(async () => undefined);
+    const saveChange = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSave = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <StringTextField value="" name="fullName" label="Full Name" onChange={onChange} saveChange={saveChange} />
+    );
+
+    const input = screen.getByLabelText("Full Name") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "first" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledWith("first");
+      expect(screen.getByText("Saving Change...")).toBeTruthy();
+    });
+
+    resolveSave?.();
+
+    // Parent/provider still stale after save completion.
+    rerender(
+      <StringTextField value="" name="fullName" label="Full Name" onChange={onChange} saveChange={saveChange} />
+    );
+
+    // Field should still allow typing and reflect new input.
+    const staleInput = screen.getByLabelText("Full Name") as HTMLInputElement;
+    fireEvent.change(staleInput, { target: { value: "first second" } });
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Full Name") as HTMLInputElement).value).toBe("first second");
+    });
+  });
+
   it("StringTextField shows saving and saved states", async () => {
     let resolveSave: (() => void) | undefined;
     const saveChange = vi.fn(
@@ -157,7 +243,9 @@ describe("component behavior", () => {
     );
     const onChange = vi.fn(async () => undefined);
 
-    render(<StringTextField value="x" name="fullName" label="Full Name" onChange={onChange} saveChange={saveChange} />);
+    const { rerender } = render(
+      <StringTextField value="x" name="fullName" label="Full Name" onChange={onChange} saveChange={saveChange} />
+    );
     const input = screen.getByLabelText("Full Name");
     fireEvent.change(input, { target: { value: "Saving Case" } });
     fireEvent.blur(input);
@@ -167,6 +255,15 @@ describe("component behavior", () => {
     });
 
     resolveSave?.();
+    rerender(
+      <StringTextField
+        value="Saving Case"
+        name="fullName"
+        label="Full Name"
+        onChange={onChange}
+        saveChange={saveChange}
+      />
+    );
     await waitFor(() => {
       expect(screen.getByText("Saved.")).toBeTruthy();
     });
@@ -279,7 +376,9 @@ describe("component behavior", () => {
     );
     const onChange = vi.fn(async () => undefined);
 
-    render(<NumericTextField value={3} label="Amount" onChange={onChange} saveChange={saveChange} />);
+    const { rerender } = render(
+      <NumericTextField value={3} label="Amount" onChange={onChange} saveChange={saveChange} />
+    );
     const input = screen.getByLabelText("Amount");
     fireEvent.change(input, { target: { value: "44" } });
     fireEvent.blur(input);
@@ -289,8 +388,79 @@ describe("component behavior", () => {
     });
 
     resolveSave?.();
+    rerender(<NumericTextField value={44} label="Amount" onChange={onChange} saveChange={saveChange} />);
+
     await waitFor(() => {
       expect(screen.getByText("Saved.")).toBeTruthy();
+    });
+  });
+
+  it("NumericTextField keeps typed value when save finishes before prop sync", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onChange = vi.fn(async () => undefined);
+    const saveChange = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSave = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <NumericTextField value={null} label="Amount" onChange={onChange} saveChange={saveChange} />
+    );
+
+    const input = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "42" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledWith(42);
+      expect(screen.getByText("Saving Change...")).toBeTruthy();
+    });
+
+    resolveSave?.();
+
+    // Simulate stale parent value before provider cache catches up.
+    rerender(<NumericTextField value={null} label="Amount" onChange={onChange} saveChange={saveChange} />);
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe("42");
+    });
+  });
+
+  it("NumericTextField remains editable while awaiting external sync", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onChange = vi.fn(async () => undefined);
+    const saveChange = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSave = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <NumericTextField value={null} label="Amount" onChange={onChange} saveChange={saveChange} />
+    );
+
+    const input = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "42" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledWith(42);
+      expect(screen.getByText("Saving Change...")).toBeTruthy();
+    });
+
+    resolveSave?.();
+
+    // Parent/provider still stale after save completion.
+    rerender(<NumericTextField value={null} label="Amount" onChange={onChange} saveChange={saveChange} />);
+
+    const staleInput = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(staleInput, { target: { value: "43" } });
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe("43");
     });
   });
 
