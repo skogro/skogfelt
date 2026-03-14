@@ -141,6 +141,12 @@ describe("component behavior", () => {
     });
   });
 
+  it("StringTextField clears pending timer on unmount", () => {
+    const { unmount } = render(<StringTextField value="" name="fullName" label="Full Name" />);
+    fireEvent.change(screen.getByLabelText("Full Name"), { target: { value: "teardown" } });
+    expect(() => unmount()).not.toThrow();
+  });
+
   it("StringTextField shows saving and saved states", async () => {
     let resolveSave: (() => void) | undefined;
     const saveChange = vi.fn(
@@ -255,6 +261,12 @@ describe("component behavior", () => {
       expect(onChange).toHaveBeenCalledWith(-5);
       expect(saveChange).toHaveBeenCalledWith(-5);
     });
+  });
+
+  it("NumericTextField clears pending timer on unmount", () => {
+    const { unmount } = render(<NumericTextField value={1} label="Amount" />);
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "22" } });
+    expect(() => unmount()).not.toThrow();
   });
 
   it("NumericTextField shows saving and saved states", async () => {
