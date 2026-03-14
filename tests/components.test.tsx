@@ -233,6 +233,44 @@ describe("component behavior", () => {
     });
   });
 
+  it("StringTextField does not double-save on blur while awaiting external sync", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onChange = vi.fn(async () => undefined);
+    const saveChange = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSave = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <StringTextField value="" name="fullName" label="Full Name" onChange={onChange} saveChange={saveChange} />
+    );
+
+    const input = screen.getByLabelText("Full Name");
+    fireEvent.change(input, { target: { value: "first-pass" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    resolveSave?.();
+
+    // Keep parent stale to preserve awaiting external sync state.
+    rerender(
+      <StringTextField value="" name="fullName" label="Full Name" onChange={onChange} saveChange={saveChange} />
+    );
+
+    fireEvent.blur(screen.getByLabelText("Full Name"));
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("StringTextField shows saving and saved states", async () => {
     let resolveSave: (() => void) | undefined;
     const saveChange = vi.fn(
@@ -461,6 +499,43 @@ describe("component behavior", () => {
 
     await waitFor(() => {
       expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe("43");
+    });
+  });
+
+  it("NumericTextField does not double-save on blur while awaiting external sync", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onChange = vi.fn(async () => undefined);
+    const saveChange = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveSave = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <NumericTextField value={null} label="Amount" onChange={onChange} saveChange={saveChange} />
+    );
+
+    const input = screen.getByLabelText("Amount");
+    fireEvent.change(input, { target: { value: "42" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledTimes(1);
+      expect(saveChange).toHaveBeenCalledWith(42);
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    resolveSave?.();
+
+    // Keep parent stale to preserve awaiting external sync state.
+    rerender(<NumericTextField value={null} label="Amount" onChange={onChange} saveChange={saveChange} />);
+
+    fireEvent.blur(screen.getByLabelText("Amount"));
+
+    await waitFor(() => {
+      expect(saveChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledTimes(1);
     });
   });
 

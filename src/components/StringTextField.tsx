@@ -46,6 +46,7 @@ const StringTextField = ({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuedSaveSeqRef = useRef<number>(0);
+  const currentSavingValueRef = useRef<string | null>(null);
   const mountedRef = useRef<boolean>(true);
   const awaitingExternalSyncRef = useRef<boolean>(false);
   const pendingSavedValueRef = useRef<string | null>(null);
@@ -107,6 +108,7 @@ const StringTextField = ({
           return;
         }
 
+        currentSavingValueRef.current = valueToSave;
         setChangeExecuting(true);
         setChangeError(null);
 
@@ -141,6 +143,10 @@ const StringTextField = ({
           awaitingExternalSyncRef.current = false;
           pendingSavedValueRef.current = null;
           setIsDirty(true);
+        } finally {
+          if (currentSavingValueRef.current === valueToSave) {
+            currentSavingValueRef.current = null;
+          }
         }
       });
     },
@@ -149,6 +155,17 @@ const StringTextField = ({
 
   const flushPendingSave = useCallback(() => {
     if (!saveOnChange || !isDirtyRef.current) {
+      return;
+    }
+
+    if (currentSavingValueRef.current === inputValueRef.current) {
+      return;
+    }
+
+    if (
+      awaitingExternalSyncRef.current &&
+      pendingSavedValueRef.current === inputValueRef.current
+    ) {
       return;
     }
 
