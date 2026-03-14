@@ -47,11 +47,14 @@ const NumericTextField = ({
   const [isDirty, setIsDirty] = useState<boolean>(false);
 
   const inputValueRef = useRef<string>(inputValue);
+  const externalValueRef = useRef<string>(format ? numeral(value).format(format) : String(value ?? ""));
   const isDirtyRef = useRef<boolean>(isDirty);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuedSaveSeqRef = useRef<number>(0);
   const mountedRef = useRef<boolean>(true);
+  const awaitingExternalSyncRef = useRef<boolean>(false);
+  const pendingSavedValueRef = useRef<string | null>(null);
 
   useEffect(() => {
     inputValueRef.current = inputValue;
@@ -72,9 +75,26 @@ const NumericTextField = ({
   }, []);
 
   useEffect(() => {
+    const normalizedValue = format ? numeral(value).format(format) : String(value ?? "");
+    externalValueRef.current = normalizedValue;
+
+    if (awaitingExternalSyncRef.current) {
+      const externalNumber = numeral(normalizedValue).value();
+      const pendingNumber = numeral(pendingSavedValueRef.current ?? "").value();
+      const hasNumericMatch =
+        externalNumber !== null && pendingNumber !== null && externalNumber === pendingNumber;
+      const hasStringMatch = normalizedValue === pendingSavedValueRef.current;
+
+      if (hasNumericMatch || hasStringMatch) {
+        awaitingExternalSyncRef.current = false;
+        pendingSavedValueRef.current = null;
+        setIsDirty(false);
+      }
+      return;
+    }
+
     if (!isDirty) {
-      const initialValue = format ? numeral(value).format(format) : String(value ?? "");
-      setInputValue(initialValue);
+      setInputValue(normalizedValue);
     }
   }, [format, value, isDirty]);
 
@@ -156,7 +176,20 @@ const NumericTextField = ({
           setChangeExecuting(false);
           setChangeError(null);
           if (inputValueRef.current === valueToSave && saveSeq === queuedSaveSeqRef.current) {
-            setIsDirty(false);
+            const externalNumber = numeral(externalValueRef.current).value();
+            const savedNumber = numeral(valueToSave).value();
+            const hasNumericMatch =
+              externalNumber !== null && savedNumber !== null && externalNumber === savedNumber;
+            const hasStringMatch = externalValueRef.current === valueToSave;
+
+            if (hasNumericMatch || hasStringMatch) {
+              awaitingExternalSyncRef.current = false;
+              pendingSavedValueRef.current = null;
+              setIsDirty(false);
+            } else {
+              awaitingExternalSyncRef.current = true;
+              pendingSavedValueRef.current = valueToSave;
+            }
           }
         } catch (error) {
           if (!mountedRef.current) {
@@ -166,6 +199,8 @@ const NumericTextField = ({
           const message = error instanceof Error ? error.message : "Failed to save";
           setChangeExecuting(false);
           setChangeError(message);
+          awaitingExternalSyncRef.current = false;
+          pendingSavedValueRef.current = null;
           setIsDirty(true);
         }
       });
@@ -245,6 +280,8 @@ const NumericTextField = ({
         disabled={disabled}
         onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
           const nextValue = event.target.value;
+          awaitingExternalSyncRef.current = false;
+          pendingSavedValueRef.current = null;
           setInputValue(nextValue);
           setIsDirty(true);
           setChangeError(null);
