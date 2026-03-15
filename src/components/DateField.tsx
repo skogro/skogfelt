@@ -1,61 +1,56 @@
-import { Stack, Typography } from "@mui/material";
+import { Stack } from "@mui/material";
 import { DatePicker } from "@mui/x-date-pickers";
 import dayjs, { Dayjs } from "dayjs";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import FieldSaveStatus from "./FieldSaveStatus";
+import useQueuedFieldSave from "../hooks/useQueuedFieldSave";
 
 export type DateFieldProps = {
   value: Date | null;
   label: string;
   disabled?: boolean;
-  onChange?: (value: Date) => Promise<unknown>;
-  saveChange?: (value: Date) => Promise<unknown>;
+  onChange?: (value: Date | null) => Promise<unknown>;
+  saveChange?: (value: Date | null) => Promise<unknown>;
   saveOnChange?: boolean;
 };
 
 const noopAsync = async () => undefined;
+const normalizeDateKey = (dateValue: Date | null): string => (dateValue ? dayjs(dateValue).format("YYYY-MM-DD") : "");
+const normalizeDayjsKey = (dateValue: Dayjs | null): string =>
+  dateValue && dateValue.isValid() ? dateValue.format("YYYY-MM-DD") : "";
 
 const DateField = ({
   value,
   label,
   disabled = false,
-  onChange = noopAsync as (value: Date) => Promise<unknown>,
-  saveChange = noopAsync as (value: Date) => Promise<unknown>,
+  onChange = noopAsync as (value: Date | null) => Promise<unknown>,
+  saveChange = noopAsync as (value: Date | null) => Promise<unknown>,
   saveOnChange = true,
 }: DateFieldProps) => {
-  const [inputChanged, setInputChanged] = useState<boolean>(false);
-  const [inputValue, setInputValue] = useState<Dayjs | null>(null);
-  const [changeExecuting, setChangeExecuting] = useState<boolean | null>(null);
+  const [inputValue, setInputValue] = useState<Dayjs | null>(value ? dayjs(value) : null);
+  const {
+    changeExecuting,
+    changeError,
+    isDirty,
+    updateInputKey,
+    markUserInput,
+    syncExternalKey,
+    enqueueSave,
+  } = useQueuedFieldSave<string>({
+    initialInputKey: normalizeDateKey(value),
+    initialExternalKey: normalizeDateKey(value),
+  });
 
   useEffect(() => {
-    if (value) {
-      setInputValue(dayjs(value));
-    } else {
-      setInputValue(null);
-    }
-  }, [value]);
-
-  const executeSaveChange = useCallback(
-    async (dateValue: Date) => {
-      setChangeExecuting(true);
-      await saveChange(dateValue);
-      setChangeExecuting(false);
-    },
-    [saveChange]
-  );
+    updateInputKey(normalizeDayjsKey(inputValue));
+  }, [inputValue, updateInputKey]);
 
   useEffect(() => {
-    if (!(inputValue && inputChanged)) {
-      return;
-    }
-
-    (async () => {
-      await onChange(inputValue.toDate());
-      if (saveOnChange) {
-        await executeSaveChange(inputValue.toDate());
-      }
-      setInputChanged(false);
-    })();
-  }, [inputValue, inputChanged, onChange, saveOnChange, executeSaveChange]);
+    const normalizedValue = normalizeDateKey(value);
+    syncExternalKey(normalizedValue, () => {
+      setInputValue(value ? dayjs(value) : null);
+    });
+  }, [value, syncExternalKey]);
 
   return (
     <Stack direction="column">
@@ -64,21 +59,36 @@ const DateField = ({
         value={inputValue ?? null}
         disabled={disabled}
         onChange={newValue => {
-          setInputChanged(true);
+          const normalizedValueToSave = normalizeDayjsKey(newValue);
+          markUserInput(normalizedValueToSave);
           setInputValue(newValue);
+          enqueueSave({
+            valueKey: normalizedValueToSave,
+            showSavingStatus: saveOnChange,
+            beforeSave: () => {
+              if (newValue && !newValue.isValid()) {
+                return { skip: true, errorMessage: "Invalid date", keepDirty: true };
+              }
+              return {};
+            },
+            runSave: async () => {
+              const dateValueToSave = newValue ? newValue.toDate() : null;
+              await onChange(dateValueToSave);
+              if (saveOnChange) {
+                await saveChange(dateValueToSave);
+              }
+            },
+          });
         }}
         sx={{ width: "100%", mt: 1, mb: 1 }}
       />
-      {changeExecuting === true && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -3, pt: 0, mr: 1, color: "grey" }}>
-          Saving Change...
-        </Typography>
-      )}
-      {changeExecuting === false && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -3, pt: 0, mr: 1, color: "green" }}>
-          Saved.
-        </Typography>
-      )}
+      <FieldSaveStatus
+        changeExecuting={changeExecuting}
+        changeError={changeError}
+        isDirty={isDirty}
+        marginTop={-3}
+        errorText="Save failed. Pick another date to retry."
+      />
     </Stack>
   );
 };

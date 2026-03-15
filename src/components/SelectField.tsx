@@ -1,5 +1,7 @@
-import { MenuItem, Stack, TextField, Typography } from "@mui/material";
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { MenuItem, Stack, TextField } from "@mui/material";
+import { CSSProperties, useEffect, useState } from "react";
+import FieldSaveStatus from "./FieldSaveStatus";
+import useQueuedFieldSave from "../hooks/useQueuedFieldSave";
 
 export type SelectOption = { value: string; label: string };
 
@@ -36,54 +38,53 @@ const SelectField = ({
   size = "medium",
   sx,
 }: SelectFieldProps) => {
-  const [inputChanged, setInputChanged] = useState<boolean>(false);
-  const [inputValue, setInputValue] = useState<string>("");
-  const [changeExecuting, setChangeExecuting] = useState<boolean | null>(null);
-  const onChangeRef = useRef(onChange);
-  const saveChangeRef = useRef(saveChange);
+  const initialValue = value || defaultValue || "";
+  const [inputValue, setInputValue] = useState<string>(initialValue);
+  const {
+    changeExecuting,
+    changeError,
+    isDirty,
+    updateInputKey,
+    markUserInput,
+    syncExternalKey,
+    enqueueSave,
+  } = useQueuedFieldSave<string>({
+    initialInputKey: initialValue,
+    initialExternalKey: initialValue,
+  });
 
   useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
+    updateInputKey(inputValue);
+  }, [inputValue, updateInputKey]);
 
   useEffect(() => {
-    saveChangeRef.current = saveChange;
-  }, [saveChange]);
-
-  useEffect(() => {
-    if (value) {
-      setInputValue(value);
-    } else {
-      setInputValue(defaultValue || "");
-    }
-  }, [defaultValue, value]);
-
-  useEffect(() => {
-    if (!inputChanged) {
-      return;
-    }
-
-    (async () => {
-      await onChangeRef.current(inputValue);
-      if (saveOnChange) {
-        setChangeExecuting(true);
-        await saveChangeRef.current(inputValue);
-        setChangeExecuting(false);
-      }
-      setInputChanged(false);
-    })();
-  }, [inputChanged, inputValue, saveOnChange]);
+    const normalizedValue = value || defaultValue || "";
+    syncExternalKey(normalizedValue, () => {
+      setInputValue(normalizedValue);
+    });
+  }, [defaultValue, value, syncExternalKey]);
 
   return options ? (
     <Stack direction="column">
       <TextField
         select
         label={label}
-        value={inputValue === null ? defaultValue : inputValue}
+        value={inputValue}
         defaultValue={defaultValue}
         onChange={event => {
-          setInputValue(event.target.value);
-          setInputChanged(true);
+          const nextValue = event.target.value;
+          markUserInput(nextValue);
+          setInputValue(nextValue);
+          enqueueSave({
+            valueKey: nextValue,
+            showSavingStatus: saveOnChange,
+            runSave: async () => {
+              await onChange(nextValue);
+              if (saveOnChange) {
+                await saveChange(nextValue);
+              }
+            },
+          });
         }}
         sx={Object.assign({}, defaultSx, sx)}
         size={size}
@@ -95,16 +96,13 @@ const SelectField = ({
           </MenuItem>
         ))}
       </TextField>
-      {changeExecuting === true && showSave && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "grey" }}>
-          Saving Change...
-        </Typography>
-      )}
-      {changeExecuting === false && showSave && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "green" }}>
-          Saved.
-        </Typography>
-      )}
+      <FieldSaveStatus
+        changeExecuting={changeExecuting}
+        changeError={changeError}
+        isDirty={isDirty}
+        showSave={showSave}
+        errorText="Save failed. Pick another option to retry."
+      />
     </Stack>
   ) : null;
 };
