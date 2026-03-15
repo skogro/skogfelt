@@ -1,5 +1,7 @@
-import { MenuItem, Stack, TextField, Typography } from "@mui/material";
-import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { MenuItem, Stack, TextField } from "@mui/material";
+import { CSSProperties, useEffect, useState } from "react";
+import FieldSaveStatus from "./FieldSaveStatus";
+import useQueuedFieldSave from "../hooks/useQueuedFieldSave";
 
 export type SelectOption = { value: string; label: string };
 
@@ -36,104 +38,31 @@ const SelectField = ({
   size = "medium",
   sx,
 }: SelectFieldProps) => {
-  const [inputValue, setInputValue] = useState<string>(value || defaultValue || "");
-  const [changeExecuting, setChangeExecuting] = useState<boolean | null>(null);
-  const [changeError, setChangeError] = useState<string | null>(null);
-  const [isDirty, setIsDirty] = useState<boolean>(false);
-
-  const inputValueRef = useRef<string>(inputValue);
-  const externalValueRef = useRef<string>(value || defaultValue || "");
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const queuedSaveSeqRef = useRef<number>(0);
-  const currentSavingValueRef = useRef<string | null>(null);
-  const mountedRef = useRef<boolean>(true);
-  const awaitingExternalSyncRef = useRef<boolean>(false);
-  const pendingSavedValueRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const initialValue = value || defaultValue || "";
+  const [inputValue, setInputValue] = useState<string>(initialValue);
+  const {
+    changeExecuting,
+    changeError,
+    isDirty,
+    updateInputKey,
+    markUserInput,
+    syncExternalKey,
+    enqueueSave,
+  } = useQueuedFieldSave<string>({
+    initialInputKey: initialValue,
+    initialExternalKey: initialValue,
+  });
 
   useEffect(() => {
-    inputValueRef.current = inputValue;
-  }, [inputValue]);
+    updateInputKey(inputValue);
+  }, [inputValue, updateInputKey]);
 
   useEffect(() => {
     const normalizedValue = value || defaultValue || "";
-    externalValueRef.current = normalizedValue;
-
-    if (awaitingExternalSyncRef.current) {
-      if (normalizedValue === pendingSavedValueRef.current) {
-        awaitingExternalSyncRef.current = false;
-        pendingSavedValueRef.current = null;
-        setIsDirty(false);
-      }
-      return;
-    }
-
-    if (!isDirty) {
+    syncExternalKey(normalizedValue, () => {
       setInputValue(normalizedValue);
-    }
-  }, [defaultValue, value, isDirty]);
-
-  const enqueueSave = useCallback(
-    (valueToSave: string) => {
-      const saveSeq = ++queuedSaveSeqRef.current;
-
-      saveQueueRef.current = saveQueueRef.current.then(async () => {
-        if (saveSeq < queuedSaveSeqRef.current || !mountedRef.current) {
-          return;
-        }
-
-        currentSavingValueRef.current = valueToSave;
-        setChangeExecuting(saveOnChange ? true : null);
-        setChangeError(null);
-
-        try {
-          await onChange(valueToSave);
-          if (saveOnChange) {
-            await saveChange(valueToSave);
-          }
-
-          if (!mountedRef.current) {
-            return;
-          }
-
-          setChangeExecuting(saveOnChange ? false : null);
-          setChangeError(null);
-          if (inputValueRef.current === valueToSave && saveSeq === queuedSaveSeqRef.current) {
-            if (externalValueRef.current === valueToSave) {
-              awaitingExternalSyncRef.current = false;
-              pendingSavedValueRef.current = null;
-              setIsDirty(false);
-            } else {
-              awaitingExternalSyncRef.current = true;
-              pendingSavedValueRef.current = valueToSave;
-            }
-          }
-        } catch (error) {
-          if (!mountedRef.current) {
-            return;
-          }
-
-          const message = error instanceof Error ? error.message : "Failed to save";
-          setChangeExecuting(false);
-          setChangeError(message);
-          awaitingExternalSyncRef.current = false;
-          pendingSavedValueRef.current = null;
-          setIsDirty(true);
-        } finally {
-          if (currentSavingValueRef.current === valueToSave) {
-            currentSavingValueRef.current = null;
-          }
-        }
-      });
-    },
-    [onChange, saveChange, saveOnChange]
-  );
+    });
+  }, [defaultValue, value, syncExternalKey]);
 
   return options ? (
     <Stack direction="column">
@@ -144,13 +73,18 @@ const SelectField = ({
         defaultValue={defaultValue}
         onChange={event => {
           const nextValue = event.target.value;
-          awaitingExternalSyncRef.current = false;
-          pendingSavedValueRef.current = null;
+          markUserInput(nextValue);
           setInputValue(nextValue);
-          setIsDirty(true);
-          setChangeError(null);
-          setChangeExecuting(null);
-          enqueueSave(nextValue);
+          enqueueSave({
+            valueKey: nextValue,
+            showSavingStatus: saveOnChange,
+            runSave: async () => {
+              await onChange(nextValue);
+              if (saveOnChange) {
+                await saveChange(nextValue);
+              }
+            },
+          });
         }}
         sx={Object.assign({}, defaultSx, sx)}
         size={size}
@@ -162,21 +96,13 @@ const SelectField = ({
           </MenuItem>
         ))}
       </TextField>
-      {changeExecuting === true && showSave && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "grey" }}>
-          Saving Change...
-        </Typography>
-      )}
-      {changeExecuting === false && !changeError && !isDirty && showSave && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "green" }}>
-          Saved.
-        </Typography>
-      )}
-      {changeError && showSave && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "error.main" }}>
-          Save failed. Pick another option to retry.
-        </Typography>
-      )}
+      <FieldSaveStatus
+        changeExecuting={changeExecuting}
+        changeError={changeError}
+        isDirty={isDirty}
+        showSave={showSave}
+        errorText="Save failed. Pick another option to retry."
+      />
     </Stack>
   ) : null;
 };

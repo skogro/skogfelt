@@ -46,6 +46,15 @@ import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 
 Treat component internal state as transient UI state; parent/store state remains the source of truth.
 
+### Internal save pipeline architecture
+
+Within the library, save-flow behavior is centralized in shared hooks under `src/hooks`:
+
+- `useQueuedFieldSave` for queueing and external-sync reconciliation
+- `useDebouncedSaveTrigger` for debounced scheduling and flush triggers
+
+This consolidation keeps behavior consistent across components and reduces regression risk when save-flow logic changes.
+
 ## State Management Integration
 
 ### Local state (simple pages)
@@ -184,6 +193,7 @@ Use these rules when generating code with an AI model:
    - `SelectField`/`DateField`: `onChange` still runs when `saveOnChange={false}`.
 7. Use explicit `min`/`max`/`required` constraints for numeric/text quality.
 8. Avoid passing null/undefined options to `SelectField`.
+9. Do not import internal hooks directly from package internals; consume the public package API from `@skogro/skogfelt`.
 
 ## Testing Integration
 

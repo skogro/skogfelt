@@ -27,6 +27,15 @@ npm install react react-dom @mui/material @mui/icons-material @emotion/react @em
 
 - [Common Approaches](./common-approaches.md)
 
+## Internal Architecture Notes
+
+The field components now share internal save orchestration hooks under `src/hooks`:
+
+- `useQueuedFieldSave` (queueing, dirty/sync guards, save state)
+- `useDebouncedSaveTrigger` (debounce + blur/pagehide/visibility flush)
+
+These hooks are implementation details for maintainers and are not part of the public package API.
+
 Use these docs together:
 
 - Start with each component page to learn props and behavior.

@@ -96,3 +96,17 @@ Good component integration tests should cover:
 - blur/pagehide flushing for text and numeric inputs
 
 This set catches most usability regressions early.
+
+## 8) Internal Hook Consolidation (Maintainers)
+
+The field save behavior is now intentionally centralized in shared internal hooks located in `src/hooks`:
+
+- `useQueuedFieldSave`: shared queue sequencing, dirty tracking, external value sync handoff, and save status/error state.
+- `useDebouncedSaveTrigger`: shared debounced save scheduling and flush behavior (`blur`, `pagehide`, and `visibilitychange`) for text-like inputs.
+
+Current usage:
+
+- `DateField` and `SelectField` use `useQueuedFieldSave` for immediate change flows.
+- `StringTextField` and `NumericTextField` use both hooks for debounced save flows.
+
+This keeps field behavior consistent and makes future save-flow fixes easier to apply across all components.

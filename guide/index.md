@@ -16,6 +16,7 @@ Reusable React form components and a debounce hook for MUI-based applications. T
 - **Save state feedback** - "Saving Change..." and "Saved." status messaging in UI
 - **Debounced updates** - 1-second default debounced save behavior for string and numeric fields
 - **MUI-native ergonomics** - Built on MUI `TextField` and MUI X `DatePicker`
+- **Shared save internals** - Internal hooks unify queueing/sync/debounce behavior across fields
 
 ## Public API
 
@@ -75,10 +76,15 @@ export function ProfileNameField() {
 src/
 ├── components/
 │   ├── DateField.tsx
+│   ├── FieldSaveStatus.tsx
 │   ├── NumericTextField.tsx
 │   ├── SelectField.tsx
 │   └── StringTextField.tsx
 ├── hooks/
-│   └── useDebounce.ts
+│   ├── useDebounce.ts
+│   ├── useDebouncedSaveTrigger.ts   # internal
+│   └── useQueuedFieldSave.ts        # internal
 └── index.ts
 ```
+
+`useDebouncedSaveTrigger` and `useQueuedFieldSave` are internal implementation hooks and are not exported from the package root.

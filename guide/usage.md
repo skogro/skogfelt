@@ -41,6 +41,7 @@ Most fields support:
 
 - `StringTextField` and `NumericTextField` debounce saves by ~1000ms, flush on blur, and show save status text.
 - `DateField` and `SelectField` execute immediately after change.
+- Save orchestration is internally shared so queueing/sync behavior stays consistent between fields.
 
 ## Component APIs
 
@@ -146,6 +147,15 @@ useDebounce<TArgs extends unknown[]>(
 
 - Debounces callback execution by `delay` ms (default `1000`).
 - Keeps callback reference fresh across re-renders.
+
+### Internal hooks used by field components
+
+The package also contains internal hooks in `src/hooks`:
+
+- `useQueuedFieldSave`
+- `useDebouncedSaveTrigger`
+
+These are implementation details used by field components and are not exported from `@skogro/skogfelt`.
 
 ## Behavioral Notes for Models
 

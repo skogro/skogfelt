@@ -1,8 +1,11 @@
 import ClearIcon from "@mui/icons-material/Clear";
-import { InputAdornment, Stack, TextField, Typography } from "@mui/material";
+import { InputAdornment, Stack, TextField } from "@mui/material";
 import numeral from "numeral";
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import validator from "validator";
+import FieldSaveStatus from "./FieldSaveStatus";
+import useDebouncedSaveTrigger from "../hooks/useDebouncedSaveTrigger";
+import useQueuedFieldSave from "../hooks/useQueuedFieldSave";
 
 export type NumericTextFieldProps = {
   value: number | null;
@@ -39,65 +42,52 @@ const NumericTextField = ({
   onErase = noopAsync,
   size = "medium",
 }: NumericTextFieldProps) => {
-  const [inputValue, setInputValue] = useState<string>(format ? numeral(value).format(format) : String(value ?? ""));
+  const formatValue = useCallback(
+    (val: number | null) => (format ? numeral(val).format(format) : String(val ?? "")),
+    [format]
+  );
+
+  const initialValue = formatValue(value);
+  const [inputValue, setInputValue] = useState<string>(initialValue);
   const [inputValueValid, setInputValueValid] = useState<boolean>(true);
   const [inputValueHelper, setInputValueHelper] = useState<string>("");
-  const [changeExecuting, setChangeExecuting] = useState<boolean | null>(null);
-  const [changeError, setChangeError] = useState<string | null>(null);
-  const [isDirty, setIsDirty] = useState<boolean>(false);
-
-  const inputValueRef = useRef<string>(inputValue);
-  const externalValueRef = useRef<string>(format ? numeral(value).format(format) : String(value ?? ""));
-  const isDirtyRef = useRef<boolean>(isDirty);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const queuedSaveSeqRef = useRef<number>(0);
-  const currentSavingValueRef = useRef<string | null>(null);
-  const mountedRef = useRef<boolean>(true);
-  const awaitingExternalSyncRef = useRef<boolean>(false);
-  const pendingSavedValueRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    inputValueRef.current = inputValue;
-  }, [inputValue]);
-
-  useEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
+  const areValuesEquivalent = useCallback((left: string, right: string) => {
+    const leftNumber = numeral(left).value();
+    const rightNumber = numeral(right).value();
+    if (leftNumber !== null && rightNumber !== null) {
+      return leftNumber === rightNumber;
+    }
+    return left === right;
   }, []);
+  const {
+    changeExecuting,
+    changeError,
+    isDirty,
+    isDirtyRef,
+    inputKeyRef,
+    currentSavingValueRef,
+    awaitingExternalSyncRef,
+    pendingSavedValueRef,
+    updateInputKey,
+    markUserInput,
+    syncExternalKey,
+    enqueueSave,
+  } = useQueuedFieldSave<string>({
+    initialInputKey: initialValue,
+    initialExternalKey: initialValue,
+    isEqual: areValuesEquivalent,
+  });
 
   useEffect(() => {
-    const normalizedValue = format ? numeral(value).format(format) : String(value ?? "");
-    externalValueRef.current = normalizedValue;
+    updateInputKey(inputValue);
+  }, [inputValue, updateInputKey]);
 
-    if (awaitingExternalSyncRef.current) {
-      const externalNumber = numeral(normalizedValue).value();
-      const pendingNumber = numeral(pendingSavedValueRef.current ?? "").value();
-      const hasNumericMatch =
-        externalNumber !== null && pendingNumber !== null && externalNumber === pendingNumber;
-      const hasStringMatch = normalizedValue === pendingSavedValueRef.current;
-
-      if (hasNumericMatch || hasStringMatch) {
-        awaitingExternalSyncRef.current = false;
-        pendingSavedValueRef.current = null;
-        setIsDirty(false);
-      }
-      return;
-    }
-
-    if (!isDirty) {
+  useEffect(() => {
+    const normalizedValue = formatValue(value);
+    syncExternalKey(normalizedValue, () => {
       setInputValue(normalizedValue);
-    }
-  }, [format, value, isDirty]);
+    });
+  }, [formatValue, syncExternalKey, value]);
 
   const validateValue = useCallback(
     (val: string) => {
@@ -149,142 +139,50 @@ const NumericTextField = ({
     validateValue(inputValue);
   }, [inputValue, validateValue]);
 
-  const enqueueSave = useCallback(
+  const queueSave = useCallback(
     (valueToSave: string) => {
-      const saveSeq = ++queuedSaveSeqRef.current;
+      enqueueSave({
+        valueKey: valueToSave,
+        beforeSave: () => {
+          const validation = validateValue(valueToSave);
+          if (!validation.valid || validation.parsed === null || !validation.shouldSave) {
+            return { skip: true };
+          }
+          return {};
+        },
+        runSave: async () => {
+          const validation = validateValue(valueToSave);
+          if (!validation.valid || validation.parsed === null || !validation.shouldSave) {
+            return;
+          }
 
-      saveQueueRef.current = saveQueueRef.current.then(async () => {
-        if (saveSeq < queuedSaveSeqRef.current || !mountedRef.current) {
-          return;
-        }
-
-        const validation = validateValue(valueToSave);
-        if (!validation.valid || validation.parsed === null || !validation.shouldSave) {
-          return;
-        }
-
-        currentSavingValueRef.current = valueToSave;
-        setChangeExecuting(true);
-        setChangeError(null);
-
-        try {
           await onChange(validation.parsed);
           await saveChange(validation.parsed);
-
-          if (!mountedRef.current) {
-            return;
-          }
-
-          setChangeExecuting(false);
-          setChangeError(null);
-          if (inputValueRef.current === valueToSave && saveSeq === queuedSaveSeqRef.current) {
-            const externalNumber = numeral(externalValueRef.current).value();
-            const savedNumber = numeral(valueToSave).value();
-            const hasNumericMatch =
-              externalNumber !== null && savedNumber !== null && externalNumber === savedNumber;
-            const hasStringMatch = externalValueRef.current === valueToSave;
-
-            if (hasNumericMatch || hasStringMatch) {
-              awaitingExternalSyncRef.current = false;
-              pendingSavedValueRef.current = null;
-              setIsDirty(false);
-            } else {
-              awaitingExternalSyncRef.current = true;
-              pendingSavedValueRef.current = valueToSave;
-            }
-          }
-        } catch (error) {
-          if (!mountedRef.current) {
-            return;
-          }
-
-          const message = error instanceof Error ? error.message : "Failed to save";
-          setChangeExecuting(false);
-          setChangeError(message);
-          awaitingExternalSyncRef.current = false;
-          pendingSavedValueRef.current = null;
-          setIsDirty(true);
-        } finally {
-          if (currentSavingValueRef.current === valueToSave) {
-            currentSavingValueRef.current = null;
-          }
-        }
+        },
       });
     },
-    [onChange, saveChange, validateValue]
+    [enqueueSave, onChange, saveChange, validateValue]
   );
 
-  const flushPendingSave = useCallback(() => {
-    if (!saveOnChange || !isDirtyRef.current) {
-      return;
-    }
-
-    if (currentSavingValueRef.current === inputValueRef.current) {
-      return;
-    }
-
-    if (
-      awaitingExternalSyncRef.current &&
-      pendingSavedValueRef.current === inputValueRef.current
-    ) {
-      return;
-    }
-
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
-    enqueueSave(inputValueRef.current);
-  }, [enqueueSave, saveOnChange]);
-
-  useEffect(() => {
-    if (!saveOnChange) {
-      return;
-    }
-
-    const onPageHide = () => {
-      flushPendingSave();
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        flushPendingSave();
-      }
-    };
-
-    window.addEventListener("pagehide", onPageHide);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [flushPendingSave, saveOnChange]);
-
-  const scheduleSave = useCallback(
+  const shouldScheduleNumericSave = useCallback(
     (nextValue: string) => {
-      if (!saveOnChange) {
-        return;
-      }
-
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-
       const validation = validateValue(nextValue);
-      if (!validation.valid || !validation.shouldSave) {
-        return;
-      }
-
-      saveTimerRef.current = setTimeout(() => {
-        saveTimerRef.current = null;
-        enqueueSave(nextValue);
-      }, 1000);
+      return validation.valid && validation.shouldSave;
     },
-    [enqueueSave, saveOnChange, validateValue]
+    [validateValue]
   );
+
+  const { flushPendingSave, scheduleSave } = useDebouncedSaveTrigger<string>({
+    saveOnChange,
+    isDirtyRef,
+    inputKeyRef,
+    currentSavingValueRef,
+    awaitingExternalSyncRef,
+    pendingSavedValueRef,
+    queueSave,
+    isEquivalent: areValuesEquivalent,
+    shouldSchedule: shouldScheduleNumericSave,
+  });
 
   return (
     <Stack direction="column">
@@ -297,12 +195,8 @@ const NumericTextField = ({
         disabled={disabled}
         onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
           const nextValue = event.target.value;
-          awaitingExternalSyncRef.current = false;
-          pendingSavedValueRef.current = null;
+          markUserInput(nextValue);
           setInputValue(nextValue);
-          setIsDirty(true);
-          setChangeError(null);
-          setChangeExecuting(null);
           scheduleSave(nextValue);
         }}
         onBlur={flushPendingSave}
@@ -317,21 +211,12 @@ const NumericTextField = ({
             ) : null,
         }}
       />
-      {changeExecuting === true && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "grey" }}>
-          Saving Change...
-        </Typography>
-      )}
-      {changeExecuting === false && !changeError && !isDirty && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "green" }}>
-          Saved.
-        </Typography>
-      )}
-      {changeError && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "error.main" }}>
-          Save failed. Keep typing to retry.
-        </Typography>
-      )}
+      <FieldSaveStatus
+        changeExecuting={changeExecuting}
+        changeError={changeError}
+        isDirty={isDirty}
+        errorText="Save failed. Keep typing to retry."
+      />
     </Stack>
   );
 };

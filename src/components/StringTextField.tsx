@@ -1,6 +1,9 @@
 import ClearIcon from "@mui/icons-material/Clear";
-import { InputAdornment, Stack, TextField, Typography } from "@mui/material";
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { InputAdornment, Stack, TextField } from "@mui/material";
+import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import FieldSaveStatus from "./FieldSaveStatus";
+import useDebouncedSaveTrigger from "../hooks/useDebouncedSaveTrigger";
+import useQueuedFieldSave from "../hooks/useQueuedFieldSave";
 
 export type StringTextFieldProps = {
   value: string | number | null | undefined;
@@ -33,60 +36,38 @@ const StringTextField = ({
   onErase = noopAsync,
   size = "medium",
 }: StringTextFieldProps) => {
-  const [inputValue, setInputValue] = useState<string>(value ? String(value) : "");
+  const initialValue = value ? String(value) : "";
+  const [inputValue, setInputValue] = useState<string>(initialValue);
   const [inputValueValid, setInputValueValid] = useState<boolean>(true);
   const [inputValueHelper, setInputValueHelper] = useState<string>("");
-  const [changeExecuting, setChangeExecuting] = useState<boolean | null>(null);
-  const [changeError, setChangeError] = useState<string | null>(null);
-  const [isDirty, setIsDirty] = useState<boolean>(false);
-
-  const inputValueRef = useRef<string>(inputValue);
-  const externalValueRef = useRef<string>(value ? String(value) : "");
-  const isDirtyRef = useRef<boolean>(isDirty);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const queuedSaveSeqRef = useRef<number>(0);
-  const currentSavingValueRef = useRef<string | null>(null);
-  const mountedRef = useRef<boolean>(true);
-  const awaitingExternalSyncRef = useRef<boolean>(false);
-  const pendingSavedValueRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    inputValueRef.current = inputValue;
-  }, [inputValue]);
-
-  useEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
+  const {
+    changeExecuting,
+    changeError,
+    isDirty,
+    isDirtyRef,
+    inputKeyRef,
+    currentSavingValueRef,
+    awaitingExternalSyncRef,
+    pendingSavedValueRef,
+    updateInputKey,
+    markUserInput,
+    syncExternalKey,
+    enqueueSave,
+  } = useQueuedFieldSave<string>({
+    initialInputKey: initialValue,
+    initialExternalKey: initialValue,
+  });
 
   useEffect(() => {
-    mountedRef.current = true;
-
-    return () => {
-      mountedRef.current = false;
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
-  }, []);
+    updateInputKey(inputValue);
+  }, [inputValue, updateInputKey]);
 
   useEffect(() => {
     const normalizedValue = value ? String(value) : "";
-    externalValueRef.current = normalizedValue;
-
-    if (awaitingExternalSyncRef.current) {
-      if (normalizedValue === pendingSavedValueRef.current) {
-        awaitingExternalSyncRef.current = false;
-        pendingSavedValueRef.current = null;
-        setIsDirty(false);
-      }
-      return;
-    }
-
-    if (!isDirty) {
+    syncExternalKey(normalizedValue, () => {
       setInputValue(normalizedValue);
-    }
-  }, [value, isDirty]);
+    });
+  }, [value, syncExternalKey]);
 
   useEffect(() => {
     if (required && inputValue.trim() === "") {
@@ -99,125 +80,28 @@ const StringTextField = ({
     setInputValueHelper("");
   }, [inputValue, label, required]);
 
-  const enqueueSave = useCallback(
+  const queueSave = useCallback(
     (valueToSave: string) => {
-      const saveSeq = ++queuedSaveSeqRef.current;
-
-      saveQueueRef.current = saveQueueRef.current.then(async () => {
-        if (saveSeq < queuedSaveSeqRef.current || !mountedRef.current) {
-          return;
-        }
-
-        currentSavingValueRef.current = valueToSave;
-        setChangeExecuting(true);
-        setChangeError(null);
-
-        try {
+      enqueueSave({
+        valueKey: valueToSave,
+        runSave: async () => {
           await onChange(valueToSave);
           await saveChange(valueToSave);
-
-          if (!mountedRef.current) {
-            return;
-          }
-
-          setChangeExecuting(false);
-          setChangeError(null);
-          if (inputValueRef.current === valueToSave && saveSeq === queuedSaveSeqRef.current) {
-            if (externalValueRef.current === valueToSave) {
-              awaitingExternalSyncRef.current = false;
-              pendingSavedValueRef.current = null;
-              setIsDirty(false);
-            } else {
-              awaitingExternalSyncRef.current = true;
-              pendingSavedValueRef.current = valueToSave;
-            }
-          }
-        } catch (error) {
-          if (!mountedRef.current) {
-            return;
-          }
-
-          const message = error instanceof Error ? error.message : "Failed to save";
-          setChangeExecuting(false);
-          setChangeError(message);
-          awaitingExternalSyncRef.current = false;
-          pendingSavedValueRef.current = null;
-          setIsDirty(true);
-        } finally {
-          if (currentSavingValueRef.current === valueToSave) {
-            currentSavingValueRef.current = null;
-          }
-        }
+        },
       });
     },
-    [onChange, saveChange]
+    [enqueueSave, onChange, saveChange]
   );
 
-  const flushPendingSave = useCallback(() => {
-    if (!saveOnChange || !isDirtyRef.current) {
-      return;
-    }
-
-    if (currentSavingValueRef.current === inputValueRef.current) {
-      return;
-    }
-
-    if (
-      awaitingExternalSyncRef.current &&
-      pendingSavedValueRef.current === inputValueRef.current
-    ) {
-      return;
-    }
-
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
-    enqueueSave(inputValueRef.current);
-  }, [enqueueSave, saveOnChange]);
-
-  useEffect(() => {
-    if (!saveOnChange) {
-      return;
-    }
-
-    const onPageHide = () => {
-      flushPendingSave();
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        flushPendingSave();
-      }
-    };
-
-    window.addEventListener("pagehide", onPageHide);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [flushPendingSave, saveOnChange]);
-
-  const scheduleSave = useCallback(
-    (nextValue: string) => {
-      if (!saveOnChange) {
-        return;
-      }
-
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-
-      saveTimerRef.current = setTimeout(() => {
-        saveTimerRef.current = null;
-        enqueueSave(nextValue);
-      }, 1000);
-    },
-    [enqueueSave, saveOnChange]
-  );
+  const { flushPendingSave, scheduleSave } = useDebouncedSaveTrigger<string>({
+    saveOnChange,
+    isDirtyRef,
+    inputKeyRef,
+    currentSavingValueRef,
+    awaitingExternalSyncRef,
+    pendingSavedValueRef,
+    queueSave,
+  });
 
   return (
     <Stack direction="column">
@@ -231,12 +115,8 @@ const StringTextField = ({
         disabled={disabled}
         onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
           const nextValue = event.target.value;
-          awaitingExternalSyncRef.current = false;
-          pendingSavedValueRef.current = null;
+          markUserInput(nextValue);
           setInputValue(nextValue);
-          setIsDirty(true);
-          setChangeError(null);
-          setChangeExecuting(null);
           scheduleSave(nextValue);
         }}
         onBlur={flushPendingSave}
@@ -252,21 +132,12 @@ const StringTextField = ({
             ) : null,
         }}
       />
-      {changeExecuting === true && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "grey" }}>
-          Saving Change...
-        </Typography>
-      )}
-      {changeExecuting === false && !changeError && !isDirty && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "green" }}>
-          Saved.
-        </Typography>
-      )}
-      {changeError && (
-        <Typography sx={{ textAlign: "right", fontSize: 10, mt: -2, pt: 0, mr: 1, color: "error.main" }}>
-          Save failed. Keep typing to retry.
-        </Typography>
-      )}
+      <FieldSaveStatus
+        changeExecuting={changeExecuting}
+        changeError={changeError}
+        isDirty={isDirty}
+        errorText="Save failed. Keep typing to retry."
+      />
     </Stack>
   );
 };
