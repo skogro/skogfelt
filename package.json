@@ -17,7 +17,8 @@
   },
   "homepage": "https://github.com/skogro/skogfelt",
   "files": [
-    "dist"
+    "dist",
+    "guide"
   ],
   "scripts": {
     "build": "npm run lint && tsc --noEmit && vite build",
